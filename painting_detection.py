@@ -1,0 +1,106 @@
+import cv2
+import numpy as np
+import time
+import sys
+import os
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+
+def painting_detection(frame):
+    CONFIDENCE = 0.5
+    SCORE_THRESHOLD = 0.5
+    IOU_THRESHOLD = 0.5
+
+    # the neural network configuration
+    config_path = "cfg/yolov3-custom.cfg"
+    # the YOLO net weights file
+    weights_path = "cfg/yolov3-custom_last.weights"
+    # weights_path = "weights/yolov3-tiny.weights"
+
+    # loading all the class labels (objects)
+    labels = open("cfg/coco.names").read().strip().split("\n")
+    # generating colors for each object for later plotting
+    colors = np.random.randint(0, 255, size=(len(labels), 3), dtype="uint8")
+
+    # load the YOLO network
+    net = cv2.dnn.readNetFromDarknet(config_path, weights_path)
+
+    h, w = frame.shape[:2]
+    # create 4D blob
+    blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+
+    # sets the blob as the input of the network
+    net.setInput(blob)
+
+    # get all the layer names
+    ln = net.getLayerNames()
+    ln = [ln[i[0] - 1] for i in net.getUnconnectedOutLayers()]
+    # feed forward (inference) and get the network output
+    # measure how much it took in seconds
+    start = time.perf_counter()
+    layer_outputs = net.forward(ln)
+    time_took = time.perf_counter() - start
+    print(f"Time took: {time_took:.2f}s")
+
+    boxes, confidences, class_ids = [], [], []
+    ROI = []
+
+    # loop over each of the layer outputs
+    for output in layer_outputs:
+        # loop over each of the object detections
+        for detection in output:
+            # extract the class id (label) and confidence (as a probability) of
+            # the current object detection
+            scores = detection[5:]
+            class_id = np.argmax(scores)
+            confidence = scores[class_id]
+            # discard weak predictions by ensuring the detected
+            # probability is greater than the minimum probability
+            if confidence > CONFIDENCE:
+                # scale the bounding box coordinates back relative to the
+                # size of the image, keeping in mind that YOLO actually
+                # returns the center (x, y)-coordinates of the bounding
+                # box followed by the boxes' width and height
+                box = detection[:4] * np.array([w, h, w, h])
+                (centerX, centerY, width, height) = box.astype("int")
+
+                # use the center (x, y)-coordinates to derive the top and
+                # and left corner of the bounding box
+                x = int(centerX - (width / 2))
+                y = int(centerY - (height / 2))
+
+                # update our list of bounding box coordinates, confidences,
+                # and class IDs
+                boxes.append([x, y, int(width), int(height)])
+                confidences.append(float(confidence))
+                class_ids.append(class_id)
+                ROI.append(frame[y:y + height, x:x + width])
+
+    # perform the non maximum suppression given the scores defined before
+    idxs = cv2.dnn.NMSBoxes(boxes, confidences, SCORE_THRESHOLD, IOU_THRESHOLD)
+
+    font_scale = 1
+    thickness = 5
+
+    # ensure at least one detection exists
+    '''
+    if len(idxs) > 0:
+        # loop over the indexes we are keeping
+        for i in idxs.flatten():
+            # extract the bounding box coordinates
+            x, y = boxes[i][0], boxes[i][1]
+            w, h = boxes[i][2], boxes[i][3]
+            # draw a bounding box rectangle and label on the image
+            color = [int(c) for c in colors[class_ids[i]]]
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color=[0, 255, 0], thickness=thickness)
+            text = f"{labels[class_ids[i]]}: {confidences[i]:.2f}"
+            # now put the text (label: confidence %)
+            cv2.putText(frame, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=font_scale, color=(0, 0, 0), thickness=thickness)
+    '''
+
+    for i in ROI:
+        print(i.shape)
+        imgplot = plt.imshow(cv2.cvtColor(i, cv2.COLOR_BGR2RGB))
+        plt.show()
+    return ROI
